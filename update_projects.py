@@ -9,7 +9,7 @@ class PackageUpdater:
     This script assumes that all packages are located in one directory.
     """
 
-    PACKAGE_DIR = Path(__file__).parent.parent.parent / "ambient-packages"
+    PACKAGE_DIR = Path(__file__).parent.parent / "ambient-packages"
     ENVS_DIR = Path(r"C:\Users\ronny\.virtualenvs")
 
     # Internal commands
