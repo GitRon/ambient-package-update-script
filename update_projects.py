@@ -60,9 +60,13 @@ class PackageUpdater:
                 self._run_command(f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}")
 
                 # It's OK if the linting fails, the auto-formatter is still doing the job
-                print("> Running Ruff linting and formatting")
+                print("> Use Ruff to lint and format")
                 linting = subprocess.run(self._PACKAGE_RUFF_LINTING, capture_output=True, text=True)
                 print(linting.stdout)
+
+                # Now check if we need to fix some linting issues
+                print("> Running Ruff linting and formatting")
+                self._run_command(self._PACKAGE_RUFF_LINTING)
 
                 print("> Running unit-tests")
                 self._run_command(f"{venv_exec} {self._PACKAGE_TESTS}")
