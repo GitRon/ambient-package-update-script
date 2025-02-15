@@ -209,22 +209,14 @@ class PackageUpdater:
                     self._print_cyan("> No changes. Skipping package.\n\n")
                     continue
 
-                print("> Incrementing version patch release")
-                self._increment_version(
-                    file_path=f"./{package_name.replace('-', '_')}/__init__.py"
-                )
+                if not branch_already_exists:
+                    print("> Incrementing version patch release")
+                    self._increment_version(
+                        file_path=f"./{package_name.replace('-', '_')}/__init__.py"
+                    )
 
-                print("> Adding release notes to changelog")
-                self._update_changelog(file_path="./CHANGES.md", version=version)
-
-                branch_name = f"maintenance/v{version}"
-                print("> Check if branch already exists")
-                if self._check_branch_exists(branch_name=branch_name):
-                    print("> Switching to git branch")
-                    self._run_command(f"git checkout {branch_name}")
-                else:
-                    print("> Creating and switching to new git branch")
-                    self._run_command(f"git switch -c {branch_name}")
+                    print("> Adding release notes to changelog")
+                    self._update_changelog(file_path="./CHANGES.md", version=version)
 
                 print("> Adding changes to git")
                 self._run_command("git add .")
