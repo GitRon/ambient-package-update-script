@@ -1,4 +1,6 @@
+import datetime
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,6 +15,7 @@ class PackageUpdater:
     ENVS_DIR = Path(r"C:\Users\ronny\.virtualenvs")
 
     # Internal commands
+    _GIT_DIFF = "git diff --quiet"
     _PIP_SELF_UPDATE = "-m pip install --upgrade pip"
     _PIP_UPDATE_AMBIENT_UPDATER = "-m pip install -U ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
@@ -39,6 +42,48 @@ class PackageUpdater:
             else:
                 self._print_red(f"> {result.stdout}")
 
+    def _increment_version(self, file_path: str):
+        if not os.path.exists(file_path):
+            raise RuntimeError("Version file not found.")
+
+        with open(file_path, "r") as f:
+            content = f.read()
+
+        # Find version and increment it by one
+        def update_version(match):
+            major, minor, patch = match.group(1), match.group(2), int(match.group(3)) + 1
+            return f'__version__ = "{major}.{minor}.{patch}"'
+
+        updated_content = re.sub(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"', update_version, content)
+
+        with open(file_path, "w") as f:
+            f.write(updated_content)
+
+        version_match = re.search(r'__version__\s*=\s*"(\d+\.\d+\.\d+)"', updated_content)
+
+        if version_match:
+            return version_match.group(1)
+        else:
+            raise RuntimeError("No version found.")
+
+    def _update_changelog(self, file_path: str, version: str):
+        if not os.path.exists(file_path):
+            raise RuntimeError("Changelog file not found.")
+
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+
+        # Sicherstellen, dass es mindestens 3 Zeilen gibt
+        while len(lines) < 3:
+            lines.append("\n")
+
+        # Neue Zeile an Position 3 einfügen (Index 2, da 0-basiert)
+        lines.insert(2, f"""**{version}** ({datetime.date.today()})
+  * Maintenance updates via ambient-package-update\n\n""")
+
+        with open(file_path, "w") as f:
+            f.writelines(lines)
+
     def process(self):
         for directory in self.PACKAGE_DIR.iterdir():
             if directory.is_dir() and (Path(directory) / ".ambient-package-update").is_dir():
@@ -50,6 +95,11 @@ class PackageUpdater:
                 # Switching into package directory
                 os.chdir(directory)
 
+                # todo: maybe we should create a PR and not run all those pipeline steps locally
+
+                print("> Check if repo is clean and contains no uncommitted changes")
+                self._run_command(self._GIT_DIFF)
+
                 print("> Self-updating pip")
                 self._run_command(f"{venv_exec} {self._PIP_SELF_UPDATE}")
 
@@ -58,6 +108,12 @@ class PackageUpdater:
 
                 print("> Rendering configuration templates")
                 self._run_command(f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}")
+
+                print("> Incrementing version patch release")
+                version = self._increment_version(file_path=f"./{directory.name.replace("-", "_")}/__init__.py")
+
+                print("> Adding release notes to changelog")
+                self._update_changelog(file_path=f"./CHANGES.md", version=version)
 
                 # It's OK if the linting fails, the auto-formatter is still doing the job
                 print("> Use Ruff to lint and format")
