@@ -17,7 +17,7 @@ class PackageUpdater:
     # Internal commands
     _GIT_DIFF = "git diff --quiet"
     _PIP_SELF_UPDATE = "-m pip install --upgrade pip"
-    _PIP_UPDATE_REQUIRED_PACKAGES = "-m pip install -U ambient-package-update PyGitHub"
+    _PIP_UPDATE_REQUIRED_PACKAGES = "-m pip install -U ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
 
     def _print_red(self, text):
