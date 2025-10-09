@@ -1,6 +1,7 @@
 import datetime
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,7 +18,7 @@ class PackageUpdater:
     # Internal commands
     _GIT_DIFF = "git diff --quiet"
     _PIP_SELF_UPDATE = "-m pip install --upgrade pip"
-    _PIP_UPDATE_REQUIRED_PACKAGES = "-m pip install -U ambient-package-update"
+    _PIP_UPDATE_REQUIRED_PACKAGES = "-m pip install -U uv ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
 
     def _print_red(self, text):
@@ -30,9 +31,9 @@ class PackageUpdater:
     def _print_cyan(self, text):
         print(f"\033[96m{text}\033[0m")
 
-    def _run_command(self, command):
+    def _run_command(self, command, *, ignore_return_code=False):
         result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
+        if result.returncode == 0 or ignore_return_code:
             self._print_green(f"> {result.stdout}")
         else:
             if result.stderr:
@@ -124,6 +125,28 @@ class PackageUpdater:
         else:
             return "master"
 
+    def get_dependency_groups_from_config(self, file_path: str):
+        """Extract all keys from the optional_dependencies dictionary in the metadata file."""
+        import importlib.util
+        import sys
+
+        # Load the module from the file path
+        spec = importlib.util.spec_from_file_location("metadata", file_path)
+        if spec is None or spec.loader is None:
+            return []
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["metadata"] = module
+        spec.loader.exec_module(module)
+
+        # Get the METADATA object and extract optional_dependencies keys
+        if hasattr(module, "METADATA") and hasattr(module.METADATA, "optional_dependencies"):
+            optional_deps = module.METADATA.optional_dependencies
+            if isinstance(optional_deps, dict):
+                return list(optional_deps.keys())
+
+        return []
+
     def get_package_name_from_config(self, file_path: str):
         with open(file_path) as f:
             content = f.read()
@@ -146,6 +169,8 @@ class PackageUpdater:
         return bool(result.stdout.strip())
 
     def process(self):
+        path_to_metadata = "./.ambient-package-update/metadata.py"
+
         for directory in self.PACKAGE_DIR.iterdir():
             if (
                 directory.is_dir()
@@ -171,14 +196,14 @@ class PackageUpdater:
 
                 print("> Fetching main branch name from config")
                 main_branch = self.get_main_branch_from_config(
-                    file_path="./.ambient-package-update/metadata.py"
+                    file_path=path_to_metadata
                 )
 
                 print(f"> Ensure we're on the {main_branch} branch")
                 self._run_command(f"git checkout {main_branch}")
 
                 package_name = self.get_package_name_from_config(
-                    file_path="./.ambient-package-update/metadata.py"
+                    file_path=path_to_metadata
                 )
                 version = self._get_next_version(
                     file_path=f"./{package_name.replace('-', '_')}/__init__.py"
@@ -199,6 +224,15 @@ class PackageUpdater:
                     f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}"
                 )
 
+                print("> Locking dependencies")
+                self._run_command(f"uv lock")
+
+                print("> Installing dependencies")
+                dependency_groups = self.get_dependency_groups_from_config(file_path=path_to_metadata)
+                groups_args = " ".join(f"--group {group}" for group in dependency_groups)
+                uv_sync_command = f"uv sync --frozen {groups_args}"
+                self._run_command(uv_sync_command)
+
                 print("> Check if something has changed. If not, we're done here")
                 result = subprocess.run(self._GIT_DIFF, capture_output=True, text=True)
                 if result.returncode == 0:
@@ -218,6 +252,9 @@ class PackageUpdater:
                     print("> Adding release notes to changelog")
                     self._update_changelog(file_path="./CHANGES.md", version=version)
 
+                print("> Run pre-commit linters")
+                self._run_command(f"pre-commit run --all-files", ignore_return_code=True)
+
                 print("> Adding changes to git")
                 self._run_command("git add .")
 
@@ -230,8 +267,13 @@ class PackageUpdater:
                 print("> Pushing changes to origin")
                 self._run_command(f"git push -u origin {branch_name}")
 
+                print("> Clean previously built versions")
+                if os.path.exists("dist"):
+                    shutil.rmtree("dist")
+
                 # Since GitHub doesn't provide token rotation, we have to create the PRs manually
 
+                print("\n\n\n")
 
 pu = PackageUpdater()
 pu.process()
