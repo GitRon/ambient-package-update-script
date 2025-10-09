@@ -259,9 +259,7 @@ class PackageUpdater:
                     self._update_changelog(file_path="./CHANGES.md", version=version)
 
                 print("> Run pre-commit linters")
-                self._run_command(
-                    "pre-commit run --all-files", ignore_return_code=True
-                )
+                self._run_command("pre-commit run --all-files", ignore_return_code=True)
 
                 print("> Adding changes to git")
                 self._run_command("git add .")
