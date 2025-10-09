@@ -193,6 +193,9 @@ class PackageUpdater:
                 print("> Self-updating pip")
                 self._run_command(f"{venv_exec} {self._PIP_SELF_UPDATE}")
 
+                print("> Uninstall ambient-package-update to ensure we get the version from PyPI")
+                self._run_command(f"{venv_exec} -m pip uninstall -y ambient-package-update")
+
                 print("> Updating required packages")
                 self._run_command(f"{venv_exec} {self._PIP_UPDATE_REQUIRED_PACKAGES}")
 
@@ -251,6 +254,8 @@ class PackageUpdater:
                         self._run_command(f"git branch -d {branch_name}")
                     self._print_cyan("> No changes. Skipping package.\n\n")
                     continue
+                else:
+                    print("\n")
 
                 if not branch_already_exists:
                     print("> Incrementing version patch release")
