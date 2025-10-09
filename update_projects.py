@@ -245,6 +245,9 @@ class PackageUpdater:
                 print("> Installing pre-commit hooks")
                 self._run_command("pre-commit install -t pre-push -t pre-commit --install-hooks")
 
+                print("> Run pre-commit linters")
+                self._run_command("pre-commit run --all-files", ignore_return_code=True)
+
                 print("> Check if something has changed")
                 result = subprocess.run(self._GIT_DIFF, capture_output=True, text=True)
                 if result.returncode == 0:
@@ -265,9 +268,6 @@ class PackageUpdater:
 
                     print("> Adding release notes to changelog")
                     self._update_changelog(file_path="./CHANGES.md", version=version)
-
-                print("> Run pre-commit linters")
-                self._run_command("pre-commit run --all-files", ignore_return_code=True)
 
                 print("> Adding changes to git")
                 self._run_command("git add .")
