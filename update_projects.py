@@ -245,7 +245,7 @@ class PackageUpdater:
                 print("> Installing pre-commit hooks")
                 self._run_command("pre-commit install -t pre-push -t pre-commit --install-hooks")
 
-                print("> Check if something has changed. If not, we're done here")
+                print("> Check if something has changed")
                 result = subprocess.run(self._GIT_DIFF, capture_output=True, text=True)
                 if result.returncode == 0:
                     if not branch_already_exists:
