@@ -239,6 +239,9 @@ class PackageUpdater:
                 uv_sync_command = f"uv sync --frozen {groups_args}"
                 self._run_command(uv_sync_command)
 
+                print("> Installing pre-commit hooks")
+                self._run_command("pre-commit install -t pre-push -t pre-commit --install-hooks")
+
                 print("> Check if something has changed. If not, we're done here")
                 result = subprocess.run(self._GIT_DIFF, capture_output=True, text=True)
                 if result.returncode == 0:
