@@ -140,7 +140,9 @@ class PackageUpdater:
         spec.loader.exec_module(module)
 
         # Get the METADATA object and extract optional_dependencies keys
-        if hasattr(module, "METADATA") and hasattr(module.METADATA, "optional_dependencies"):
+        if hasattr(module, "METADATA") and hasattr(
+            module.METADATA, "optional_dependencies"
+        ):
             optional_deps = module.METADATA.optional_dependencies
             if isinstance(optional_deps, dict):
                 return list(optional_deps.keys())
@@ -225,11 +227,15 @@ class PackageUpdater:
                 )
 
                 print("> Locking dependencies")
-                self._run_command(f"uv lock")
+                self._run_command("uv lock")
 
                 print("> Installing dependencies")
-                dependency_groups = self.get_dependency_groups_from_config(file_path=path_to_metadata)
-                groups_args = " ".join(f"--group {group}" for group in dependency_groups)
+                dependency_groups = self.get_dependency_groups_from_config(
+                    file_path=path_to_metadata
+                )
+                groups_args = " ".join(
+                    f"--group {group}" for group in dependency_groups
+                )
                 uv_sync_command = f"uv sync --frozen {groups_args}"
                 self._run_command(uv_sync_command)
 
@@ -253,7 +259,9 @@ class PackageUpdater:
                     self._update_changelog(file_path="./CHANGES.md", version=version)
 
                 print("> Run pre-commit linters")
-                self._run_command(f"pre-commit run --all-files", ignore_return_code=True)
+                self._run_command(
+                    "pre-commit run --all-files", ignore_return_code=True
+                )
 
                 print("> Adding changes to git")
                 self._run_command("git add .")
@@ -274,6 +282,7 @@ class PackageUpdater:
                 # Since GitHub doesn't provide token rotation, we have to create the PRs manually
 
                 print("\n\n\n")
+
 
 pu = PackageUpdater()
 pu.process()
