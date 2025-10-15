@@ -13,12 +13,10 @@ class PackageUpdater:
     """
 
     PACKAGE_DIR = Path(__file__).parent.parent / "ambient-packages"
-    ENVS_DIR = Path(r"C:\Users\ronny\.virtualenvs")
 
     # Internal commands
     _GIT_DIFF = "git diff --quiet"
-    _PIP_SELF_UPDATE = "-m pip install --upgrade pip"
-    _PIP_UPDATE_REQUIRED_PACKAGES = "-m pip install -U uv ambient-package-update"
+    _PIP_UPDATE_REQUIRED_PACKAGES = "-m uv pip install -U uv ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
 
     def _print_red(self, text):
@@ -180,7 +178,7 @@ class PackageUpdater:
             ):
                 self._create_header(package_name=directory.name)
 
-                venv_exec = self.ENVS_DIR / directory.name / "Scripts/python.exe"
+                venv_exec = directory / ".venv/Scripts/python.exe"
                 if not venv_exec.exists():
                     self._print_red("> Venv not found. Aborting.")
 
@@ -190,11 +188,8 @@ class PackageUpdater:
                 print("> Check if repo is clean and contains no uncommitted changes")
                 self._run_command(self._GIT_DIFF)
 
-                print("> Self-updating pip")
-                self._run_command(f"{venv_exec} {self._PIP_SELF_UPDATE}")
-
                 print("> Uninstall ambient-package-update to ensure we get the version from PyPI")
-                self._run_command(f"{venv_exec} -m pip uninstall -y ambient-package-update")
+                self._run_command(f"{venv_exec} -m uv pip uninstall ambient-package-update")
 
                 print("> Updating required packages")
                 self._run_command(f"{venv_exec} {self._PIP_UPDATE_REQUIRED_PACKAGES}")
@@ -237,7 +232,7 @@ class PackageUpdater:
                     file_path=path_to_metadata
                 )
                 groups_args = " ".join(
-                    f"--group {group}" for group in dependency_groups
+                    f"--extra {group}" for group in dependency_groups
                 )
                 uv_sync_command = f"uv sync --frozen {groups_args}"
                 self._run_command(uv_sync_command)
