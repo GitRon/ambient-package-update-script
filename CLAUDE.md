@@ -36,6 +36,6 @@ The entire logic lives in `update_projects.py` as the `PackageUpdater` class:
 ## Tooling
 
 - **Python 3.13+** required (enforced by pyupgrade in pre-commit)
-- **uv** for dependency management (lock/sync commands run directly as `uv lock` / `uv sync`)
+- **uv** for dependency management (lock/sync commands run directly as `uv lock --upgrade` / `uv sync`)
 - **Ruff** for formatting and linting (via pre-commit hooks)
 - **GitHub token** must be set in `.env` as `GITHUB_ACCESS_TOKEN` for git push to work
