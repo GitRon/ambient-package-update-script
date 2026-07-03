@@ -1,8 +1,11 @@
 import datetime
+import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
+import urllib.request
 from pathlib import Path
 
 
@@ -93,21 +96,147 @@ class PackageUpdater:
         with open(file_path, "w") as f:
             f.write(updated_content)
 
-    def _update_changelog(self, file_path: str, version: str):
-        if not os.path.exists(file_path):
-            raise RuntimeError("Changelog file not found.")
+    # -------------------------------------------------------------------------
+    # ambient-package-update changelog
+    # -------------------------------------------------------------------------
 
-        with open(file_path) as f:
-            lines = f.readlines()
+    def _get_apu_version_from_lock(self) -> str | None:
+        lock_path = Path("uv.lock")
+        if not lock_path.exists():
+            return None
+        current_name = None
+        for line in lock_path.read_text(encoding="utf-8").splitlines():
+            name_match = re.match(r'^name\s*=\s*"([^"]+)"', line)
+            version_match = re.match(r'^version\s*=\s*"([^"]+)"', line)
+            if name_match:
+                current_name = name_match.group(1)
+            elif version_match and current_name == "ambient-package-update":
+                return version_match.group(1)
+        return None
+
+    def _http_get(self, url: str) -> bytes:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "ambient-package-updater"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as response:
+            return response.read()
+
+    def _fetch_apu_changelog(self) -> str | None:
+        """Fetches CHANGES.md via PyPI metadata → GitHub raw URL."""
+        try:
+            data = json.loads(self._http_get("https://pypi.org/pypi/ambient-package-update/json"))
+            github_url = None
+            for val in (data.get("info", {}).get("project_urls") or {}).values():
+                if "github.com" in (val or "").lower():
+                    github_url = val
+                    break
+            if not github_url:
+                print("> Could not find GitHub URL on PyPI — falling back to generic entry")
+                return None
+            match = re.search(r"github\.com/([^/]+)/([^/\s#?]+)", github_url)
+            if not match:
+                print(f"> Could not parse GitHub URL ({github_url}) — falling back to generic entry")
+                return None
+            owner = match.group(1)
+            repo = re.sub(r"\.git$", "", match.group(2))
+            for branch in ("main", "master"):
+                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/CHANGES.md"
+                try:
+                    return self._http_get(raw_url).decode("utf-8")
+                except Exception:
+                    continue
+            print(f"> Could not fetch CHANGES.md from {owner}/{repo} — falling back to generic entry")
+            return None
+        except Exception as e:
+            print(f"> Failed to fetch changelog: {e} — falling back to generic entry")
+            return None
+
+    @staticmethod
+    def _parse_version(v: str) -> tuple[int, int, int]:
+        major, minor, patch = v.split(".")
+        return (int(major), int(minor), int(patch))
+
+    def _extract_changelog_sections(
+        self, content: str, old_version: str, new_version: str
+    ) -> str:
+        """Return changelog sections with old_version < section <= new_version."""
+        old_v = self._parse_version(old_version)
+        new_v = self._parse_version(new_version)
+        sections = re.split(r"(?=^\*\*\d+\.\d+\.\d+)", content, flags=re.MULTILINE)
+        relevant = []
+        for section in sections:
+            header = re.match(r"^\*\*(\d+\.\d+\.\d+)", section)
+            if not header:
+                continue
+            v = self._parse_version(header.group(1))
+            if old_v < v <= new_v:
+                body = section[section.index("\n"):].strip()
+                if body:
+                    relevant.append(body)
+        return "\n\n".join(relevant)
+
+    def _open_in_editor(self, content: str) -> str:
+        editor = (
+            os.environ.get("EDITOR")
+            or os.environ.get("VISUAL")
+            or ("notepad" if os.name == "nt" else "nano")
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(content)
+            tmp_path = f.name
+        try:
+            subprocess.run([editor, tmp_path], check=False)
+            with open(tmp_path, encoding="utf-8") as f:
+                return f.read()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _prepare_changelog_entry(
+        self, version: str, old_apu_version: str | None, new_apu_version: str | None
+    ) -> str:
+        """
+        Build a changelog draft pre-populated with the relevant ambient-package-update
+        CHANGES.md sections, then open it in the editor for the user to review.
+        """
+        header = f"**{version}** ({datetime.date.today()})"
+        apu_sections = ""
+
+        if old_apu_version and new_apu_version and old_apu_version != new_apu_version:
+            print(
+                f"> Fetching ambient-package-update changelog"
+                f" ({old_apu_version} → {new_apu_version})"
+            )
+            raw = self._fetch_apu_changelog()
+            if raw:
+                apu_sections = self._extract_changelog_sections(
+                    raw, old_apu_version, new_apu_version
+                )
+                if not apu_sections:
+                    print("> No matching sections found in CHANGES.md — falling back to generic entry")
+
+        if apu_sections:
+            draft = f"{header}\n\n{apu_sections}\n"
+        else:
+            draft = f"{header}\n  * Maintenance updates via ambient-package-update\n"
+
+        return self._open_in_editor(draft)
+
+    def _update_changelog(self, file_path: str, content: str):
+        try:
+            with open(file_path) as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            raise RuntimeError("Changelog file not found.")
 
         while len(lines) < 3:
             lines.append("\n")
 
-        lines.insert(
-            2,
-            f"""**{version}** ({datetime.date.today()})
-  * Maintenance updates via ambient-package-update\n\n""",
-        )
+        lines.insert(2, content.rstrip() + "\n\n")
 
         with open(file_path, "w") as f:
             f.writelines(lines)
@@ -188,8 +317,12 @@ class PackageUpdater:
                 print("> Check if repo is clean and contains no uncommitted changes")
                 self._run_command(self._GIT_DIFF)
 
-                print("> Uninstall ambient-package-update to ensure we get the version from PyPI")
-                self._run_command(f"{venv_exec} -m uv pip uninstall ambient-package-update")
+                print(
+                    "> Uninstall ambient-package-update to ensure we get the version from PyPI"
+                )
+                self._run_command(
+                    f"{venv_exec} -m uv pip uninstall ambient-package-update"
+                )
 
                 print("> Updating required packages")
                 self._run_command(f"{venv_exec} {self._PIP_UPDATE_REQUIRED_PACKAGES}")
@@ -212,9 +345,14 @@ class PackageUpdater:
                 print("> Check if branch already exists")
                 branch_already_exists = False
                 if self._check_branch_exists(branch_name=branch_name):
-                    print("> Switching to git branch")
+                    print("> Switching to existing git branch")
                     self._run_command(f"git checkout {branch_name}")
-                    branch_already_exists = True
+                    init_path = f"./{package_name.replace('-', '_')}/__init__.py"
+                    with open(init_path) as f:
+                        if f'__version__ = "{version}"' in f.read():
+                            branch_already_exists = True
+                        else:
+                            print("> Version not yet incremented on branch — treating as new")
                 else:
                     print("> Creating and switching to new git branch")
                     self._run_command(f"git switch -c {branch_name}")
@@ -224,8 +362,12 @@ class PackageUpdater:
                     f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}"
                 )
 
-                print("> Locking dependencies")
-                self._run_command("uv lock")
+                old_apu_version = self._get_apu_version_from_lock()
+
+                print("> Updating and locking dependencies")
+                self._run_command("uv lock --upgrade")
+
+                new_apu_version = self._get_apu_version_from_lock()
 
                 print("> Installing dependencies")
                 dependency_groups = self.get_dependency_groups_from_config(
@@ -238,7 +380,9 @@ class PackageUpdater:
                 self._run_command(uv_sync_command)
 
                 print("> Installing pre-commit hooks")
-                self._run_command("pre-commit install -t pre-push -t pre-commit --install-hooks")
+                self._run_command(
+                    "pre-commit install -t pre-push -t pre-commit --install-hooks"
+                )
 
                 print("> Run pre-commit linters")
                 self._run_command("pre-commit run --all-files", ignore_return_code=True)
@@ -261,8 +405,15 @@ class PackageUpdater:
                         file_path=f"./{package_name.replace('-', '_')}/__init__.py"
                     )
 
-                    print("> Adding release notes to changelog")
-                    self._update_changelog(file_path="./CHANGES.md", version=version)
+                    print("> Preparing changelog entry")
+                    changelog_content = self._prepare_changelog_entry(
+                        version=version,
+                        old_apu_version=old_apu_version,
+                        new_apu_version=new_apu_version,
+                    )
+                    self._update_changelog(
+                        file_path="./CHANGES.md", content=changelog_content
+                    )
 
                 print("> Adding changes to git")
                 self._run_command("git add .")
@@ -273,8 +424,15 @@ class PackageUpdater:
                 print("> Check if we got all changes")
                 self._run_command(self._GIT_DIFF)
 
+                # todo: macht issues bei squashing und für die boa
+                # print("> Creating git tag")
+                # self._run_command(f"git tag v{version}")
+
                 print("> Pushing changes to origin")
                 self._run_command(f"git push -u origin {branch_name}")
+
+                # print("> Pushing tag to origin")
+                # self._run_command(f"git push origin v{version}")
 
                 print("> Clean previously built versions")
                 if os.path.exists("dist"):
