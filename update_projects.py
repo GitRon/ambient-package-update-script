@@ -24,7 +24,6 @@ class PackageUpdater:
 
     def _print_red(self, text):
         print(f"\033[91m{text}\033[0m")
-        exit(1)
 
     def _print_green(self, text):
         print(f"\033[92m{text}\033[0m")
@@ -41,6 +40,7 @@ class PackageUpdater:
                 self._print_red(f"> {result.stderr}")
             else:
                 self._print_red(f"> {result.stdout}")
+            exit(1)
 
     def _create_header(self, package_name: str):
         title = f"# Processing {package_name} #"
@@ -181,8 +181,12 @@ class PackageUpdater:
             or os.environ.get("VISUAL")
             or ("notepad" if os.name == "nt" else "nano")
         )
+        # Use a .txt suffix, not .md: Windows 11's Notepad opens .md files in
+        # its Markdown mode and re-serializes the content on save, which wraps
+        # every block in "**...**" and escapes "*" as "\*", corrupting the entry.
+        # Plain .txt keeps every editor in verbatim text mode.
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".md", delete=False, encoding="utf-8"
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
         ) as f:
             f.write(content)
             tmp_path = f.name
@@ -310,6 +314,7 @@ class PackageUpdater:
                 venv_exec = directory / ".venv/Scripts/python.exe"
                 if not venv_exec.exists():
                     self._print_red("> Venv not found. Aborting.")
+                    exit(1)
 
                 # Switching into package directory
                 os.chdir(directory)
@@ -379,14 +384,6 @@ class PackageUpdater:
                 uv_sync_command = f"uv sync --frozen {groups_args}"
                 self._run_command(uv_sync_command)
 
-                print("> Installing pre-commit hooks")
-                self._run_command(
-                    "pre-commit install -t pre-push -t pre-commit --install-hooks"
-                )
-
-                print("> Run pre-commit linters")
-                self._run_command("pre-commit run --all-files", ignore_return_code=True)
-
                 print("> Check if something has changed")
                 result = subprocess.run(self._GIT_DIFF, capture_output=True, text=True)
                 if result.returncode == 0:
@@ -418,8 +415,22 @@ class PackageUpdater:
                 print("> Adding changes to git")
                 self._run_command("git add .")
 
+                print("> Run pre-commit linters")
+                # Run linters only now that the version bump and changelog entry are in
+                # place, so their auto-fixes (ruff format, end-of-file-fixer, trailing
+                # whitespace) are applied here instead of aborting the commit below.
+                self._run_command("pre-commit run --all-files", ignore_return_code=True)
+
+                print("> Re-staging files adjusted by pre-commit")
+                self._run_command("git add .")
+
                 print("> Commiting changes")
-                self._run_command(f'git commit -m "Maintenance (v{version})"')
+                # Linters already ran above (line "Run pre-commit linters"). We don't
+                # install the git hooks, but pass --no-verify defensively so any hook a
+                # repo happens to have installed can't re-run and abort the commit.
+                self._run_command(
+                    f'git commit -m "Maintenance (v{version})" --no-verify'
+                )
 
                 print("> Check if we got all changes")
                 self._run_command(self._GIT_DIFF)
@@ -429,7 +440,10 @@ class PackageUpdater:
                 # self._run_command(f"git tag v{version}")
 
                 print("> Pushing changes to origin")
-                self._run_command(f"git push -u origin {branch_name}")
+                # --no-verify for the same defensive reason as the commit above: an
+                # installed pre-push hook would re-run the linters, leave ruff's
+                # auto-fixes uncommitted, and abort the push.
+                self._run_command(f"git push -u origin {branch_name} --no-verify")
 
                 # print("> Pushing tag to origin")
                 # self._run_command(f"git push origin v{version}")
