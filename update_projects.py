@@ -121,6 +121,56 @@ class PackageUpdater:
         with urllib.request.urlopen(req, timeout=8) as response:
             return response.read()
 
+    def _get_apu_min_python(self) -> tuple[int, int, int] | None:
+        """
+        Return the minimum Python version required by the latest
+        ambient-package-update release on PyPI, parsed from its
+        ``requires_python`` metadata (e.g. ``">=3.11"`` -> ``(3, 11, 0)``).
+        Returns None if it can't be determined.
+        """
+        try:
+            data = json.loads(
+                self._http_get("https://pypi.org/pypi/ambient-package-update/json")
+            )
+        except Exception as e:
+            print(f"> Failed to fetch ambient-package-update metadata: {e}")
+            return None
+        requires_python = (data.get("info") or {}).get("requires_python") or ""
+        match = re.search(r">=\s*(\d+)\.(\d+)(?:\.(\d+))?", requires_python)
+        if not match:
+            print(
+                f"> Could not parse requires_python ({requires_python!r}) —"
+                " skipping Python version check"
+            )
+            return None
+        return (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3) or 0),
+        )
+
+    def _get_venv_python_version(self, venv_exec: Path) -> tuple[int, int, int] | None:
+        """Return the (major, minor, patch) version of the given venv Python."""
+        result = subprocess.run(
+            [
+                str(venv_exec),
+                "-c",
+                "import sys; print('%d.%d.%d' % sys.version_info[:3])",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        match = re.match(r"(\d+)\.(\d+)\.(\d+)", result.stdout.strip())
+        if not match:
+            return None
+        return (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+        )
+
     def _fetch_apu_changelog(self) -> str | None:
         """Fetches CHANGES.md via PyPI metadata → GitHub raw URL."""
         try:
@@ -304,6 +354,13 @@ class PackageUpdater:
     def process(self):
         path_to_metadata = "./.ambient-package-update/metadata.py"
 
+        min_python = self._get_apu_min_python()
+        if min_python:
+            self._print_cyan(
+                "> Latest ambient-package-update requires Python >= "
+                f"{'.'.join(map(str, min_python))}"
+            )
+
         for directory in self.PACKAGE_DIR.iterdir():
             if (
                 directory.is_dir()
@@ -315,6 +372,24 @@ class PackageUpdater:
                 if not venv_exec.exists():
                     self._print_red("> Venv not found. Aborting.")
                     exit(1)
+
+                if min_python:
+                    venv_python = self._get_venv_python_version(venv_exec)
+                    if venv_python is None:
+                        self._print_red(
+                            "> Could not determine venv Python version. Aborting."
+                        )
+                        exit(1)
+                    if venv_python < min_python:
+                        self._print_red(
+                            f"> Venv Python {'.'.join(map(str, venv_python))} in"
+                            f" '{directory.name}' is older than the"
+                            f" {'.'.join(map(str, min_python))} required by the latest"
+                            " ambient-package-update. Recreate this package's venv with"
+                            f" Python >= {'.'.join(map(str, min_python))} and re-run."
+                            " Aborting."
+                        )
+                        exit(1)
 
                 # Switching into package directory
                 os.chdir(directory)
