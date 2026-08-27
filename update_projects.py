@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -15,12 +15,17 @@ class PackageUpdater:
     This script assumes that all packages are located in one directory.
     """
 
-    PACKAGE_DIR = Path(__file__).parent.parent / "ambient-packages"
+    SCRIPT_DIR = Path(__file__).parent
+    PACKAGE_DIR = SCRIPT_DIR.parent / "ambient-packages"
+    REVIEW_FILE = SCRIPT_DIR / "changelog_review.json"
 
     # Internal commands
     _GIT_DIFF = "git diff --quiet"
-    _PIP_UPDATE_REQUIRED_PACKAGES = "-m uv pip install -U uv ambient-package-update"
+    _UV_REQUIRED_PACKAGES = "-U uv ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
+
+    def __init__(self):
+        self._review_entries = []
 
     def _print_red(self, text):
         print(f"\033[91m{text}\033[0m")
@@ -174,18 +179,24 @@ class PackageUpdater:
     def _fetch_apu_changelog(self) -> str | None:
         """Fetches CHANGES.md via PyPI metadata → GitHub raw URL."""
         try:
-            data = json.loads(self._http_get("https://pypi.org/pypi/ambient-package-update/json"))
+            data = json.loads(
+                self._http_get("https://pypi.org/pypi/ambient-package-update/json")
+            )
             github_url = None
             for val in (data.get("info", {}).get("project_urls") or {}).values():
                 if "github.com" in (val or "").lower():
                     github_url = val
                     break
             if not github_url:
-                print("> Could not find GitHub URL on PyPI — falling back to generic entry")
+                print(
+                    "> Could not find GitHub URL on PyPI — falling back to generic entry"
+                )
                 return None
             match = re.search(r"github\.com/([^/]+)/([^/\s#?]+)", github_url)
             if not match:
-                print(f"> Could not parse GitHub URL ({github_url}) — falling back to generic entry")
+                print(
+                    f"> Could not parse GitHub URL ({github_url}) — falling back to generic entry"
+                )
                 return None
             owner = match.group(1)
             repo = re.sub(r"\.git$", "", match.group(2))
@@ -195,7 +206,9 @@ class PackageUpdater:
                     return self._http_get(raw_url).decode("utf-8")
                 except Exception:
                     continue
-            print(f"> Could not fetch CHANGES.md from {owner}/{repo} — falling back to generic entry")
+            print(
+                f"> Could not fetch CHANGES.md from {owner}/{repo} — falling back to generic entry"
+            )
             return None
         except Exception as e:
             print(f"> Failed to fetch changelog: {e} — falling back to generic entry")
@@ -220,42 +233,19 @@ class PackageUpdater:
                 continue
             v = self._parse_version(header.group(1))
             if old_v < v <= new_v:
-                body = section[section.index("\n"):].strip()
+                body = section[section.index("\n") :].strip()
                 if body:
                     relevant.append(body)
         return "\n\n".join(relevant)
 
-    def _open_in_editor(self, content: str) -> str:
-        editor = (
-            os.environ.get("EDITOR")
-            or os.environ.get("VISUAL")
-            or ("notepad" if os.name == "nt" else "nano")
-        )
-        # Use a .txt suffix, not .md: Windows 11's Notepad opens .md files in
-        # its Markdown mode and re-serializes the content on save, which wraps
-        # every block in "**...**" and escapes "*" as "\*", corrupting the entry.
-        # Plain .txt keeps every editor in verbatim text mode.
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(content)
-            tmp_path = f.name
-        try:
-            subprocess.run([editor, tmp_path], check=False)
-            with open(tmp_path, encoding="utf-8") as f:
-                return f.read()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
     def _prepare_changelog_entry(
         self, version: str, old_apu_version: str | None, new_apu_version: str | None
-    ) -> str:
+    ) -> tuple[str, str]:
         """
-        Build a changelog draft pre-populated with the relevant ambient-package-update
-        CHANGES.md sections, then open it in the editor for the user to review.
+        Build the changelog entry from the relevant ambient-package-update
+        CHANGES.md sections. Returns the entry together with a label describing
+        where its content came from. Entries are written unattended and are meant
+        to be reworked afterwards, guided by the summary in ``REVIEW_FILE``.
         """
         header = f"**{version}** ({datetime.date.today()})"
         apu_sections = ""
@@ -271,14 +261,20 @@ class PackageUpdater:
                     raw, old_apu_version, new_apu_version
                 )
                 if not apu_sections:
-                    print("> No matching sections found in CHANGES.md — falling back to generic entry")
+                    print(
+                        "> No matching sections found in CHANGES.md — falling back to generic entry"
+                    )
 
         if apu_sections:
-            draft = f"{header}\n\n{apu_sections}\n"
-        else:
-            draft = f"{header}\n  * Maintenance updates via ambient-package-update\n"
+            return (
+                f"{header}\n\n{apu_sections}\n",
+                "ambient-package-update CHANGES.md",
+            )
 
-        return self._open_in_editor(draft)
+        return (
+            f"{header}\n  * Maintenance updates via ambient-package-update\n",
+            "generic fallback",
+        )
 
     def _update_changelog(self, file_path: str, content: str):
         try:
@@ -309,7 +305,6 @@ class PackageUpdater:
     def get_dependency_groups_from_config(self, file_path: str):
         """Extract all keys from the optional_dependencies dictionary in the metadata file."""
         import importlib.util
-        import sys
 
         # Load the module from the file path
         spec = importlib.util.spec_from_file_location("metadata", file_path)
@@ -351,8 +346,46 @@ class PackageUpdater:
         )
         return bool(result.stdout.strip())
 
+    def _write_review_summary(self):
+        """
+        List the changelog entries that were written and dump them to
+        ``REVIEW_FILE``, so they can be reworked once the run is through.
+        """
+        if not self._review_entries:
+            self._print_cyan("> No changelog entries were written — nothing to review.")
+            return
+
+        self.REVIEW_FILE.write_text(
+            json.dumps(self._review_entries, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        line = "#" * 78
+        self._print_cyan(f"{line}\n# Changelog review\n{line}")
+        for entry in self._review_entries:
+            self._print_cyan(
+                f"* {entry['package']} v{entry['version']}"
+                f" [{entry['branch']}] — {entry['entry_source']}"
+            )
+            print(f"  {entry['changelog_path']}")
+        self._print_cyan(f"\n> Details written to {self.REVIEW_FILE}")
+        self._print_cyan(
+            "> All branches are committed and pushed already. After reworking a"
+            " changelog, amend and force-push it:"
+        )
+        print(
+            '  git commit -a --amend --no-verify -m "Maintenance (v<version>)"'
+            " && git push --force-with-lease --no-verify"
+        )
+
     def process(self):
         path_to_metadata = "./.ambient-package-update/metadata.py"
+
+        print("> Updating ambient-package-update for this script's environment")
+        self._run_command(f"uv lock --upgrade --directory {self.SCRIPT_DIR}")
+        self._run_command(
+            f"uv sync --directory {self.SCRIPT_DIR} --python {sys.executable} --frozen"
+        )
 
         min_python = self._get_apu_min_python()
         if min_python:
@@ -401,11 +434,13 @@ class PackageUpdater:
                     "> Uninstall ambient-package-update to ensure we get the version from PyPI"
                 )
                 self._run_command(
-                    f"{venv_exec} -m uv pip uninstall ambient-package-update"
+                    f"uv pip uninstall --python {venv_exec} ambient-package-update"
                 )
 
                 print("> Updating required packages")
-                self._run_command(f"{venv_exec} {self._PIP_UPDATE_REQUIRED_PACKAGES}")
+                self._run_command(
+                    f"uv pip install --python {venv_exec} {self._UV_REQUIRED_PACKAGES}"
+                )
 
                 print("> Fetching main branch name from config")
                 main_branch = self.get_main_branch_from_config(
@@ -432,7 +467,9 @@ class PackageUpdater:
                         if f'__version__ = "{version}"' in f.read():
                             branch_already_exists = True
                         else:
-                            print("> Version not yet incremented on branch — treating as new")
+                            print(
+                                "> Version not yet incremented on branch — treating as new"
+                            )
                 else:
                     print("> Creating and switching to new git branch")
                     self._run_command(f"git switch -c {branch_name}")
@@ -456,7 +493,7 @@ class PackageUpdater:
                 groups_args = " ".join(
                     f"--extra {group}" for group in dependency_groups
                 )
-                uv_sync_command = f"uv sync --frozen {groups_args}"
+                uv_sync_command = f"uv sync --python {venv_exec} --frozen {groups_args}"
                 self._run_command(uv_sync_command)
 
                 print("> Check if something has changed")
@@ -478,13 +515,27 @@ class PackageUpdater:
                     )
 
                     print("> Preparing changelog entry")
-                    changelog_content = self._prepare_changelog_entry(
+                    changelog_content, entry_source = self._prepare_changelog_entry(
                         version=version,
                         old_apu_version=old_apu_version,
                         new_apu_version=new_apu_version,
                     )
                     self._update_changelog(
                         file_path="./CHANGES.md", content=changelog_content
+                    )
+                    self._review_entries.append(
+                        {
+                            "package": directory.name,
+                            "version": version,
+                            "branch": branch_name,
+                            "main_branch": main_branch,
+                            "package_dir": str(directory.resolve()),
+                            "changelog_path": str((directory / "CHANGES.md").resolve()),
+                            "entry_source": entry_source,
+                            "apu_version_before": old_apu_version,
+                            "apu_version_after": new_apu_version,
+                            "entry": changelog_content.rstrip(),
+                        }
                     )
 
                 print("> Adding changes to git")
@@ -530,6 +581,8 @@ class PackageUpdater:
                 # Since GitHub doesn't provide token rotation, we have to create the PRs manually
 
                 print("\n\n\n")
+
+        self._write_review_summary()
 
 
 pu = PackageUpdater()

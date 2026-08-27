@@ -1,3 +1,5 @@
 .idea
 .env
 .claude
+changelog_review.json
+__pycache__
