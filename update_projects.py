@@ -109,15 +109,21 @@ class PackageUpdater:
         lock_path = Path("uv.lock")
         if not lock_path.exists():
             return None
+        # The lock may pin several ambient-package-update versions behind
+        # Python markers, so collect them all and report the newest one.
         current_name = None
+        versions = []
         for line in lock_path.read_text(encoding="utf-8").splitlines():
             name_match = re.match(r'^name\s*=\s*"([^"]+)"', line)
             version_match = re.match(r'^version\s*=\s*"([^"]+)"', line)
             if name_match:
                 current_name = name_match.group(1)
             elif version_match and current_name == "ambient-package-update":
-                return version_match.group(1)
-        return None
+                versions.append(version_match.group(1))
+        versions = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
+        if not versions:
+            return None
+        return max(versions, key=self._parse_version)
 
     def _http_get(self, url: str) -> bytes:
         req = urllib.request.Request(
