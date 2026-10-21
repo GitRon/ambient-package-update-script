@@ -20,7 +20,8 @@ class PackageUpdater:
     REVIEW_FILE = SCRIPT_DIR / "changelog_review.json"
 
     # Internal commands
-    _GIT_DIFF = "git diff --quiet"
+    # Compare against HEAD so staged changes (e.g. an untracked lockfile) count too
+    _GIT_DIFF = "git diff HEAD --quiet"
     _UV_REQUIRED_PACKAGES = "-U uv ambient-package-update"
     _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
 
@@ -484,6 +485,20 @@ class PackageUpdater:
                 self._run_command(
                     f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}"
                 )
+
+                # The rendered .gitignore excludes uv.lock, but a lockfile committed
+                # earlier stays tracked until it is removed from the index.
+                lock_ignored = (
+                    subprocess.run(
+                        ["git", "check-ignore", "--quiet", "--no-index", "uv.lock"]
+                    ).returncode
+                    == 0
+                )
+                if lock_ignored:
+                    print("> Untracking the gitignored uv.lock")
+                    self._run_command(
+                        "git rm --cached --quiet --ignore-unmatch uv.lock"
+                    )
 
                 old_apu_version = self._get_apu_version_from_lock()
 
