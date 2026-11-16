@@ -3,30 +3,15 @@ revision = 5
 requires-python = ">=3.13"
 
 [[package]]
-name = "ambient-package-update"
-version = "26.10.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jinja2" },
-    { name = "keyring" },
-    { name = "typer" },
-    { name = "uv" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/21/80/acd5c8c39761ea2ba9be963009321b37b581822fb908456c3d4af2b897c8/ambient_package_update-26.10.2.tar.gz", hash = "sha256:0b0c0af08d773349884f97ae5e62977ac482d72a02b581001b568b4ff08a22eb", size = 51412, upload-time = "2026-10-21T07:32:27.395Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/ef/52ccc23bbd1f94c5783cf126ad279dbdb9f5b3e8352e2588d1b6721bee9a/ambient_package_update-26.10.2-py3-none-any.whl", hash = "sha256:9080739c7c6be291be4032c474aa971e5aa9774637bc37fb89e6794b272de15e", size = 52409, upload-time = "2026-10-21T07:32:26.131Z" },
-]
-
-[[package]]
 name = "ambient-package-update-script"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "ambient-package-update" },
+    { name = "package-foundry" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ambient-package-update" }]
+requires-dist = [{ name = "package-foundry" }]
 
 [[package]]
 name = "annotated-doc"
@@ -346,6 +331,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/52/b8/c63995bebbb9ac9c059350e0fb8c82c2420c85aeca7d34e40aecf3df9281/more_itertools-11.2.1.tar.gz", hash = "sha256:cbf08fd0af284dc69718b9b76a8e6203df624d70209ea511e4219d350c856f63", size = 154133, upload-time = "2026-10-14T18:50:30.407Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/57/3c4b1c6f2e0cc29ba023802458ea3d2a996f87085559e4a5f2192d549532/more_itertools-11.2.1-py3-none-any.whl", hash = "sha256:35a7377edd1dd6608dcb2cdf534ded55ea32d49448875ad042cd3f879fb1ded0", size = 74405, upload-time = "2026-10-14T18:50:29.116Z" },
+]
+
+[[package]]
+name = "package-foundry"
+version = "26.11.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "keyring" },
+    { name = "typer" },
+    { name = "uv" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/b0/e1db6e844bd83cc9bc28505024b476f4512a7549a6db6072c3f0f9ec2006/package_foundry-26.11.3.tar.gz", hash = "sha256:80b61b626e96d4e4ed02c29a888d10c3f0cf4beba7d5c777cc4db7cfb537d043", size = 54177, upload-time = "2026-11-16T16:16:16.138Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/3e/52a60125b4e09b043dc630df6024eb1f40da09d0ce658f3489ca2dd4831d/package_foundry-26.11.3-py3-none-any.whl", hash = "sha256:7b0574a375c6a457cd86fd19d94033e80c904b6da6408b900620a2efb030bc60", size = 53853, upload-time = "2026-11-16T16:16:14.539Z" },
 ]
 
 [[package]]

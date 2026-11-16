@@ -1,10 +1,11 @@
 # ambient-package-update-script
 
-Script to update all Ambient packages via the ambient-package-update.
+Script to update all Ambient packages via [package-foundry](https://github.com/beyonder-deutschland/package-foundry).
 
 ## Usage
 
-Ensure all packages in `../ambient-packages/` have an active `.venv` and a `.ambient-package-update/metadata.py` config,
+Ensure all packages in `../ambient-packages/` have an active `.venv` and a `.package-foundry/metadata.py` config
+(packages still on `.ambient-package-update/` are migrated automatically via `package-foundry migrate`),
 then run:
 
 ```bash

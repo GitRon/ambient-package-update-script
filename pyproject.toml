@@ -3,5 +3,5 @@ name = "ambient-package-update-script"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "ambient-package-update",
+    "package-foundry",
 ]

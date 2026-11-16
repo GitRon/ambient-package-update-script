@@ -27,9 +27,9 @@ pre-commit install
 
 The entire logic lives in `update_projects.py` as the `PackageUpdater` class:
 
-- `PACKAGE_DIR` points to `../ambient-packages/` — only subdirectories containing `.ambient-package-update/` are processed.
+- `PACKAGE_DIR` points to `../ambient-packages/` — only subdirectories containing `.package-foundry/` (or the legacy `.ambient-package-update/`, which gets migrated via `package-foundry migrate` on the maintenance branch) are processed.
 - Each package must have a `.venv/Scripts/python.exe` (Windows venv) for the updater to proceed.
-- Per-package config is read from `.ambient-package-update/metadata.py` — the script extracts `main_branch`, `module_name`/`package_name`, and `optional_dependencies` from it.
+- Per-package config is read from `.package-foundry/metadata.py` — the script extracts `main_branch`, `module_name`/`package_name`, and `optional_dependencies` from it.
 - Branch naming convention: `maintenance/v{next_patch_version}`. If the branch already exists, version/changelog are not bumped again (idempotent re-runs).
 - `_run_command()` exits the entire process on non-zero return codes unless `ignore_return_code=True` (used for pre-commit).
 

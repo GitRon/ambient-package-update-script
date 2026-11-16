@@ -22,8 +22,14 @@ class PackageUpdater:
     # Internal commands
     # Compare against HEAD so staged changes (e.g. an untracked lockfile) count too
     _GIT_DIFF = "git diff HEAD --quiet"
-    _UV_REQUIRED_PACKAGES = "-U uv ambient-package-update"
-    _AMBIENT_UPDATER_RENDER_TEMPLATES = "-m ambient_package_update.cli render-templates"
+    _UPDATER_PACKAGE = "package-foundry"
+    _UPDATER_CONFIG_DIR = ".package-foundry"
+    # Predecessor of package-foundry; packages still configured for it get migrated
+    _LEGACY_UPDATER_PACKAGE = "ambient-package-update"
+    _LEGACY_UPDATER_CONFIG_DIR = ".ambient-package-update"
+    _UV_REQUIRED_PACKAGES = f"-U uv {_UPDATER_PACKAGE}"
+    _UPDATER_RENDER_TEMPLATES = "-m package_foundry.cli render-templates"
+    _UPDATER_MIGRATE = "-m package_foundry.cli migrate"
 
     def __init__(self):
         self._review_entries = []
@@ -103,14 +109,14 @@ class PackageUpdater:
             f.write(updated_content)
 
     # -------------------------------------------------------------------------
-    # ambient-package-update changelog
+    # package-foundry changelog
     # -------------------------------------------------------------------------
 
-    def _get_apu_version_from_lock(self) -> str | None:
+    def _get_updater_version_from_lock(self) -> str | None:
         lock_path = Path("uv.lock")
         if not lock_path.exists():
             return None
-        # The lock may pin several ambient-package-update versions behind
+        # The lock may pin several package-foundry versions behind
         # Python markers, so collect them all and report the newest one.
         current_name = None
         versions = []
@@ -119,7 +125,7 @@ class PackageUpdater:
             version_match = re.match(r'^version\s*=\s*"([^"]+)"', line)
             if name_match:
                 current_name = name_match.group(1)
-            elif version_match and current_name == "ambient-package-update":
+            elif version_match and current_name == self._UPDATER_PACKAGE:
                 versions.append(version_match.group(1))
         versions = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
         if not versions:
@@ -128,24 +134,24 @@ class PackageUpdater:
 
     def _http_get(self, url: str) -> bytes:
         req = urllib.request.Request(
-            url, headers={"User-Agent": "ambient-package-updater"}
+            url, headers={"User-Agent": "package-foundry-updater"}
         )
         with urllib.request.urlopen(req, timeout=8) as response:
             return response.read()
 
-    def _get_apu_min_python(self) -> tuple[int, int, int] | None:
+    def _get_updater_min_python(self) -> tuple[int, int, int] | None:
         """
         Return the minimum Python version required by the latest
-        ambient-package-update release on PyPI, parsed from its
+        package-foundry release on PyPI, parsed from its
         ``requires_python`` metadata (e.g. ``">=3.11"`` -> ``(3, 11, 0)``).
         Returns None if it can't be determined.
         """
         try:
             data = json.loads(
-                self._http_get("https://pypi.org/pypi/ambient-package-update/json")
+                self._http_get(f"https://pypi.org/pypi/{self._UPDATER_PACKAGE}/json")
             )
         except Exception as e:
-            print(f"> Failed to fetch ambient-package-update metadata: {e}")
+            print(f"> Failed to fetch {self._UPDATER_PACKAGE} metadata: {e}")
             return None
         requires_python = (data.get("info") or {}).get("requires_python") or ""
         match = re.search(r">=\s*(\d+)\.(\d+)(?:\.(\d+))?", requires_python)
@@ -183,11 +189,11 @@ class PackageUpdater:
             int(match.group(3)),
         )
 
-    def _fetch_apu_changelog(self) -> str | None:
+    def _fetch_updater_changelog(self) -> str | None:
         """Fetches CHANGES.md via PyPI metadata → GitHub raw URL."""
         try:
             data = json.loads(
-                self._http_get("https://pypi.org/pypi/ambient-package-update/json")
+                self._http_get(f"https://pypi.org/pypi/{self._UPDATER_PACKAGE}/json")
             )
             github_url = None
             for val in (data.get("info", {}).get("project_urls") or {}).values():
@@ -246,40 +252,55 @@ class PackageUpdater:
         return "\n\n".join(relevant)
 
     def _prepare_changelog_entry(
-        self, version: str, old_apu_version: str | None, new_apu_version: str | None
+        self,
+        version: str,
+        old_updater_version: str | None,
+        new_updater_version: str | None,
+        migrated: bool,
     ) -> tuple[str, str]:
         """
-        Build the changelog entry from the relevant ambient-package-update
+        Build the changelog entry from the relevant package-foundry
         CHANGES.md sections. Returns the entry together with a label describing
         where its content came from. Entries are written unattended and are meant
         to be reworked afterwards, guided by the summary in ``REVIEW_FILE``.
         """
         header = f"**{version}** ({datetime.date.today()})"
-        apu_sections = ""
+        updater_sections = ""
 
-        if old_apu_version and new_apu_version and old_apu_version != new_apu_version:
-            print(
-                f"> Fetching ambient-package-update changelog"
-                f" ({old_apu_version} → {new_apu_version})"
+        if migrated:
+            return (
+                f"{header}\n  * Switched maintenance tooling from"
+                f" {self._LEGACY_UPDATER_PACKAGE} to {self._UPDATER_PACKAGE}\n",
+                "migration entry",
             )
-            raw = self._fetch_apu_changelog()
+
+        if (
+            old_updater_version
+            and new_updater_version
+            and old_updater_version != new_updater_version
+        ):
+            print(
+                f"> Fetching {self._UPDATER_PACKAGE} changelog"
+                f" ({old_updater_version} → {new_updater_version})"
+            )
+            raw = self._fetch_updater_changelog()
             if raw:
-                apu_sections = self._extract_changelog_sections(
-                    raw, old_apu_version, new_apu_version
+                updater_sections = self._extract_changelog_sections(
+                    raw, old_updater_version, new_updater_version
                 )
-                if not apu_sections:
+                if not updater_sections:
                     print(
                         "> No matching sections found in CHANGES.md — falling back to generic entry"
                     )
 
-        if apu_sections:
+        if updater_sections:
             return (
-                f"{header}\n\n{apu_sections}\n",
-                "ambient-package-update CHANGES.md",
+                f"{header}\n\n{updater_sections}\n",
+                f"{self._UPDATER_PACKAGE} CHANGES.md",
             )
 
         return (
-            f"{header}\n  * Maintenance updates via ambient-package-update\n",
+            f"{header}\n  * Maintenance updates via {self._UPDATER_PACKAGE}\n",
             "generic fallback",
         )
 
@@ -386,25 +407,26 @@ class PackageUpdater:
         )
 
     def process(self):
-        path_to_metadata = "./.ambient-package-update/metadata.py"
+        path_to_metadata = f"./{self._UPDATER_CONFIG_DIR}/metadata.py"
+        path_to_legacy_metadata = f"./{self._LEGACY_UPDATER_CONFIG_DIR}/metadata.py"
 
-        print("> Updating ambient-package-update for this script's environment")
+        print(f"> Updating {self._UPDATER_PACKAGE} for this script's environment")
         self._run_command(f"uv lock --upgrade --directory {self.SCRIPT_DIR}")
         self._run_command(
             f"uv sync --directory {self.SCRIPT_DIR} --python {sys.executable} --frozen"
         )
 
-        min_python = self._get_apu_min_python()
+        min_python = self._get_updater_min_python()
         if min_python:
             self._print_cyan(
-                "> Latest ambient-package-update requires Python >= "
+                f"> Latest {self._UPDATER_PACKAGE} requires Python >= "
                 f"{'.'.join(map(str, min_python))}"
             )
 
         for directory in self.PACKAGE_DIR.iterdir():
-            if (
-                directory.is_dir()
-                and (Path(directory) / ".ambient-package-update").is_dir()
+            if directory.is_dir() and (
+                (directory / self._UPDATER_CONFIG_DIR).is_dir()
+                or (directory / self._LEGACY_UPDATER_CONFIG_DIR).is_dir()
             ):
                 self._create_header(package_name=directory.name)
 
@@ -425,7 +447,7 @@ class PackageUpdater:
                             f"> Venv Python {'.'.join(map(str, venv_python))} in"
                             f" '{directory.name}' is older than the"
                             f" {'.'.join(map(str, min_python))} required by the latest"
-                            " ambient-package-update. Recreate this package's venv with"
+                            f" {self._UPDATER_PACKAGE}. Recreate this package's venv with"
                             f" Python >= {'.'.join(map(str, min_python))} and re-run."
                             " Aborting."
                         )
@@ -437,11 +459,19 @@ class PackageUpdater:
                 print("> Check if repo is clean and contains no uncommitted changes")
                 self._run_command(self._GIT_DIFF)
 
+                needs_migration = not Path(self._UPDATER_CONFIG_DIR).is_dir()
+                metadata_file = (
+                    path_to_legacy_metadata if needs_migration else path_to_metadata
+                )
+
                 print(
-                    "> Uninstall ambient-package-update to ensure we get the version from PyPI"
+                    f"> Uninstall {self._UPDATER_PACKAGE} and"
+                    f" {self._LEGACY_UPDATER_PACKAGE} to ensure we get the version"
+                    " from PyPI"
                 )
                 self._run_command(
-                    f"uv pip uninstall --python {venv_exec} ambient-package-update"
+                    f"uv pip uninstall --python {venv_exec}"
+                    f" {self._UPDATER_PACKAGE} {self._LEGACY_UPDATER_PACKAGE}"
                 )
 
                 print("> Updating required packages")
@@ -450,15 +480,13 @@ class PackageUpdater:
                 )
 
                 print("> Fetching main branch name from config")
-                main_branch = self.get_main_branch_from_config(
-                    file_path=path_to_metadata
-                )
+                main_branch = self.get_main_branch_from_config(file_path=metadata_file)
 
                 print(f"> Ensure we're on the {main_branch} branch")
                 self._run_command(f"git checkout {main_branch}")
 
                 package_name = self.get_package_name_from_config(
-                    file_path=path_to_metadata
+                    file_path=metadata_file
                 )
                 version = self._get_next_version(
                     file_path=f"./{package_name.replace('-', '_')}/__init__.py"
@@ -481,10 +509,15 @@ class PackageUpdater:
                     print("> Creating and switching to new git branch")
                     self._run_command(f"git switch -c {branch_name}")
 
+                if needs_migration:
+                    print(
+                        f"> Migrating from {self._LEGACY_UPDATER_PACKAGE}"
+                        f" to {self._UPDATER_PACKAGE}"
+                    )
+                    self._run_command(f"{venv_exec} {self._UPDATER_MIGRATE}")
+
                 print("> Rendering configuration templates")
-                self._run_command(
-                    f"{venv_exec} {self._AMBIENT_UPDATER_RENDER_TEMPLATES}"
-                )
+                self._run_command(f"{venv_exec} {self._UPDATER_RENDER_TEMPLATES}")
 
                 # The rendered .gitignore excludes uv.lock, but a lockfile committed
                 # earlier stays tracked until it is removed from the index.
@@ -500,12 +533,12 @@ class PackageUpdater:
                         "git rm --cached --quiet --ignore-unmatch uv.lock"
                     )
 
-                old_apu_version = self._get_apu_version_from_lock()
+                old_updater_version = self._get_updater_version_from_lock()
 
                 print("> Updating and locking dependencies")
                 self._run_command("uv lock --upgrade")
 
-                new_apu_version = self._get_apu_version_from_lock()
+                new_updater_version = self._get_updater_version_from_lock()
 
                 print("> Installing dependencies")
                 dependency_groups = self.get_dependency_groups_from_config(
@@ -538,8 +571,9 @@ class PackageUpdater:
                     print("> Preparing changelog entry")
                     changelog_content, entry_source = self._prepare_changelog_entry(
                         version=version,
-                        old_apu_version=old_apu_version,
-                        new_apu_version=new_apu_version,
+                        old_updater_version=old_updater_version,
+                        new_updater_version=new_updater_version,
+                        migrated=needs_migration,
                     )
                     self._update_changelog(
                         file_path="./CHANGES.md", content=changelog_content
@@ -553,8 +587,8 @@ class PackageUpdater:
                             "package_dir": str(directory.resolve()),
                             "changelog_path": str((directory / "CHANGES.md").resolve()),
                             "entry_source": entry_source,
-                            "apu_version_before": old_apu_version,
-                            "apu_version_after": new_apu_version,
+                            "updater_version_before": old_updater_version,
+                            "updater_version_after": new_updater_version,
                             "entry": changelog_content.rstrip(),
                         }
                     )
