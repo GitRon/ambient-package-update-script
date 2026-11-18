@@ -485,6 +485,9 @@ class PackageUpdater:
                 print(f"> Ensure we're on the {main_branch} branch")
                 self._run_command(f"git checkout {main_branch}")
 
+                print(f"> Pulling the latest {main_branch} from origin")
+                self._run_command("git pull --ff-only")
+
                 package_name = self.get_package_name_from_config(
                     file_path=metadata_file
                 )
